@@ -6,7 +6,7 @@ use clap::{Parser, Subcommand};
 use crate::config::Config;
 
 #[derive(Parser)]
-#[command(name = "forge", about = "Lineforge - AI session manager")]
+#[command(name = "forge", version, about = "Lineforge - AI session manager")]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Command,
