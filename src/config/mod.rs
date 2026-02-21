@@ -20,6 +20,8 @@ pub struct Config {
     pub log_retention_days: u32,
     #[serde(default = "default_max_log_lines")]
     pub max_log_lines: usize,
+    #[serde(default)]
+    pub yolo_mode: bool,
 }
 
 fn default_port() -> u16 {
@@ -94,6 +96,7 @@ impl Default for Config {
             iterm_enabled: true,
             log_retention_days: default_log_retention(),
             max_log_lines: default_max_log_lines(),
+            yolo_mode: false,
         }
     }
 }

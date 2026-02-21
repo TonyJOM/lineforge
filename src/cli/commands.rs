@@ -71,8 +71,8 @@ pub enum Command {
         id: String,
     },
 
-    /// Interactive configuration wizard
-    Setup,
+    /// Open interactive settings
+    Settings,
 }
 
 pub async fn dispatch(cli: Cli) -> Result<()> {
@@ -111,8 +111,8 @@ pub async fn dispatch(cli: Cli) -> Result<()> {
         Command::Kill { id } => {
             crate::session::manager::kill_session_cli(&id).await?;
         }
-        Command::Setup => {
-            println!("Setup wizard coming in Milestone 6");
+        Command::Settings => {
+            super::settings::run()?;
         }
     }
     Ok(())

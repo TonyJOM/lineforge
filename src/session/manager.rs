@@ -92,6 +92,17 @@ impl SessionManager {
 
         let tool_path = crate::session::pty::resolve_tool_path(&self.config, &tool)?;
 
+        let mut extra_args = extra_args;
+        if self.config.yolo_mode {
+            let yolo_flag = match tool {
+                ToolKind::Claude => "--dangerously-skip-permissions",
+                ToolKind::Codex => "--yolo",
+            };
+            if !extra_args.iter().any(|a| a == yolo_flag) {
+                extra_args.insert(0, yolo_flag.to_string());
+            }
+        }
+
         // Create PTY pair
         let (pty, pts) = pty_process::open()
             .map_err(|e| ForgeError::Pty(format!("Failed to create PTY: {e}")))?;
