@@ -330,16 +330,21 @@ pub async fn create_session_cli(
     label: Option<String>,
     cwd: Option<PathBuf>,
     tool: Option<String>,
-    _attach: bool,
-    _no_iterm: bool,
     extra_args: Vec<String>,
-) -> Result<()> {
+) -> Result<Uuid> {
     let bind = crate::config::resolve_bind_address(&config.bind);
     let url = format!("http://{bind}:{}/api/sessions", config.port);
+    let working_dir = cwd.unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+    let default_name = working_dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("session")
+        .to_string();
+    let name = label.unwrap_or(default_name);
     let body = serde_json::json!({
-        "name": label.unwrap_or_else(|| "session".into()),
+        "name": name,
         "tool": tool.unwrap_or_else(|| config.default_tool.clone()),
-        "working_dir": cwd.unwrap_or_else(|| std::env::current_dir().unwrap_or_default()),
+        "working_dir": working_dir,
         "extra_args": extra_args,
     });
 
@@ -348,12 +353,11 @@ pub async fn create_session_cli(
 
     if resp.status().is_success() {
         let meta: SessionMeta = resp.json().await?;
-        println!("Created session: {} ({})", meta.id, meta.name);
+        Ok(meta.id)
     } else {
         let text = resp.text().await?;
         anyhow::bail!("Failed to create session: {text}");
     }
-    Ok(())
 }
 
 pub async fn list_sessions_cli() -> Result<()> {
