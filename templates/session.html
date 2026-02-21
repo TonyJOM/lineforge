@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+
+{% block title %}{{ session.name }} - Lineforge{% endblock %}
+
+{% block content %}
+<div class="session-detail">
+  <div class="session-detail-header">
+    <h1>{{ session.name }}</h1>
+    <span class="badge badge-{{ session.status.css_class() }}">{{ session.status }}</span>
+  </div>
+  <div class="session-info">
+    <span>Tool: {{ session.tool }}</span>
+    <span>Dir: {{ session.working_dir.display() }}</span>
+    <span>ID: {{ session.id }}</span>
+  </div>
+
+  <div id="terminal-container" class="terminal-container"></div>
+
+  <form id="input-form" class="input-form">
+    <input type="text" id="input-text" placeholder="Line input (Enter to send)..." autocomplete="off">
+    <button type="submit">Send</button>
+  </form>
+
+  <div class="session-actions">
+    <button id="btn-stop" class="btn btn-danger" onclick="stopSession('{{ session.id }}')">Stop</button>
+    <button id="btn-iterm" class="btn" onclick="openIterm('{{ session.id }}')">Open in iTerm2</button>
+  </div>
+</div>
+
+<script>
+  const SESSION_ID = "{{ session.id }}";
+</script>
+{% endblock %}

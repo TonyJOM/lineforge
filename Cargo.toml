@@ -1,0 +1,61 @@
+[package]
+name = "forge"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "forge"
+path = "src/main.rs"
+
+[dependencies]
+# CLI
+clap = { version = "4.5", features = ["derive"] }
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Web framework
+axum = "0.8"
+rust-embed = "8"
+mime_guess = "2"
+
+# Templates
+askama = "0.14"
+askama_web = "0.14"
+
+# Serialization & config
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+dirs = "6"
+
+# PTY
+pty-process = { version = "0.5", features = ["async"] }
+
+# Terminal raw mode
+crossterm = "0.28"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# IDs & time
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+# Streaming
+tokio-stream = { version = "0.1", features = ["sync"] }
+futures-util = "0.3"
+
+# HTTP client (for CLI commands calling server)
+reqwest = { version = "0.12", features = ["json"] }
+
+# Process signals
+libc = "0.2"
+
+# HTTP middleware
+tower-http = { version = "0.6", features = ["cors"] }
+
+# Errors
+anyhow = "1"
+thiserror = "2"

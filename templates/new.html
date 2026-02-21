@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+
+{% block title %}New Session - Lineforge{% endblock %}
+
+{% block content %}
+<h1>New Session</h1>
+<form id="new-session-form" class="new-form">
+  <div class="form-group">
+    <label for="name">Label</label>
+    <input type="text" id="name" name="name" placeholder="my-session" autofocus>
+  </div>
+  <div class="form-group">
+    <label for="tool">Tool</label>
+    <select id="tool" name="tool">
+      <option value="claude" selected>Claude</option>
+      <option value="codex">Codex</option>
+    </select>
+  </div>
+  <div class="form-group">
+    <label for="working_dir">Working Directory</label>
+    <input type="text" id="working_dir" name="working_dir" placeholder="/path/to/project">
+  </div>
+  <div class="form-group">
+    <label class="checkbox-label">
+      <input type="checkbox" id="auto_open_iterm" name="auto_open_iterm"> Open in iTerm2
+    </label>
+  </div>
+  <button type="submit" class="btn btn-primary">Create Session</button>
+</form>
+{% endblock %}

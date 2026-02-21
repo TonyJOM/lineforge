@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+
+{% block title %}Sessions - Lineforge{% endblock %}
+
+{% block content %}
+<h1>Sessions</h1>
+<div class="session-list">
+  {% if sessions.is_empty() %}
+    <p class="empty-state">No sessions yet. <a href="/new">Create one</a>.</p>
+  {% else %}
+    {% for s in sessions %}
+    <a href="/sessions/{{ s.id }}" class="session-card">
+      <div class="session-header">
+        <span class="session-name">{{ s.name }}</span>
+        <span class="badge badge-{{ s.status.css_class() }}">{{ s.status }}</span>
+      </div>
+      <div class="session-meta">
+        <span class="tool">{{ s.tool }}</span>
+        <span class="time">{{ s.created_at.format("%Y-%m-%d %H:%M") }}</span>
+      </div>
+      <div class="session-id">{{ s.id }}</div>
+    </a>
+    {% endfor %}
+  {% endif %}
+</div>
+{% endblock %}

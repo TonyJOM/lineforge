@@ -1,0 +1,9 @@
+/target
+*.swp
+*.swo
+.DS_Store
+sessions/
+*.log
+*.sock
+config.toml
+.env

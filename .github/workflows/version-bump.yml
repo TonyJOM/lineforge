@@ -1,0 +1,186 @@
+name: Version Bump
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  version-bump:
+    name: Analyze and Bump Version
+    runs-on: ubuntu-latest
+    # Only run if CI succeeded and commit wasn't made by this workflow
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      !contains(github.event.workflow_run.head_commit.message, '[skip ci]') &&
+      !contains(github.event.workflow_run.head_commit.author.name, 'github-actions')
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.PAT_TOKEN }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Get latest tag
+        id: latest_tag
+        run: |
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          echo "tag=$LATEST_TAG" >> $GITHUB_OUTPUT
+          echo "Latest tag: ${LATEST_TAG:-none}"
+
+      - name: Get commits since last tag
+        id: commits
+        run: |
+          LATEST_TAG="${{ steps.latest_tag.outputs.tag }}"
+
+          if [ -z "$LATEST_TAG" ]; then
+            echo "No previous tags found, analyzing all commits"
+            COMMITS=$(git log --pretty=format:"%s" --no-merges)
+          else
+            echo "Analyzing commits since $LATEST_TAG"
+            COMMITS=$(git log ${LATEST_TAG}..HEAD --pretty=format:"%s" --no-merges)
+          fi
+
+          echo "commits<<EOF" >> $GITHUB_OUTPUT
+          echo "$COMMITS" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Analyze commit messages
+        id: analyze
+        run: |
+          COMMITS="${{ steps.commits.outputs.commits }}"
+
+          if [ -z "$COMMITS" ]; then
+            echo "No commits to analyze"
+            echo "bump_type=none" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          echo "Commits to analyze:"
+          echo "$COMMITS"
+          echo "---"
+
+          BUMP_TYPE="none"
+
+          # Check for BREAKING CHANGE (major bump)
+          if echo "$COMMITS" | grep -qiE "^.*!:|BREAKING[ -]CHANGE"; then
+            BUMP_TYPE="major"
+          # Check for feat: (minor bump)
+          elif echo "$COMMITS" | grep -qE "^feat(\(.+\))?:"; then
+            BUMP_TYPE="minor"
+          # Check for fix:, perf:, refactor:, build: (patch bump)
+          elif echo "$COMMITS" | grep -qE "^(fix|perf|refactor|build)(\(.+\))?:"; then
+            BUMP_TYPE="patch"
+          fi
+
+          echo "bump_type=$BUMP_TYPE" >> $GITHUB_OUTPUT
+          echo "Determined bump type: $BUMP_TYPE"
+
+      - name: Get current version
+        id: current
+        if: steps.analyze.outputs.bump_type != 'none'
+        run: |
+          CURRENT_VERSION=$(grep -E '^version = "' Cargo.toml | head -1 | sed 's/version = "\([^"]*\)"/\1/')
+          echo "version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+          echo "Current version: $CURRENT_VERSION"
+
+      - name: Calculate new version
+        id: newversion
+        if: steps.analyze.outputs.bump_type != 'none'
+        run: |
+          CURRENT="${{ steps.current.outputs.version }}"
+          BUMP_TYPE="${{ steps.analyze.outputs.bump_type }}"
+
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+
+          case $BUMP_TYPE in
+            major)
+              MAJOR=$((MAJOR + 1))
+              MINOR=0
+              PATCH=0
+              ;;
+            minor)
+              MINOR=$((MINOR + 1))
+              PATCH=0
+              ;;
+            patch)
+              PATCH=$((PATCH + 1))
+              ;;
+          esac
+
+          NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+          echo "version=$NEW_VERSION" >> $GITHUB_OUTPUT
+          echo "New version: $NEW_VERSION"
+
+      - name: Update Cargo.toml version
+        if: steps.analyze.outputs.bump_type != 'none'
+        run: |
+          NEW_VERSION="${{ steps.newversion.outputs.version }}"
+          sed -i "s/^version = \"[^\"]*\"/version = \"$NEW_VERSION\"/" Cargo.toml
+
+          echo "Updated Cargo.toml:"
+          grep -A2 "\[package\]" Cargo.toml
+
+      - name: Regenerate Cargo.lock
+        if: steps.analyze.outputs.bump_type != 'none'
+        run: cargo check
+
+      - name: Commit and tag
+        if: steps.analyze.outputs.bump_type != 'none'
+        run: |
+          NEW_VERSION="${{ steps.newversion.outputs.version }}"
+          TAG="v${NEW_VERSION}"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add Cargo.toml Cargo.lock
+          git commit -m "chore(release): bump version to ${NEW_VERSION} [skip ci]"
+
+          git tag -a "$TAG" -m "Release ${TAG}"
+
+          git push origin main
+          git push origin "$TAG"
+
+          echo "Created and pushed tag: $TAG"
+
+      - name: Trigger release workflow
+        if: steps.analyze.outputs.bump_type != 'none'
+        run: |
+          # Wait for tag to be available
+          sleep 5
+          gh workflow run release.yml -f version="v${{ steps.newversion.outputs.version }}"
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+
+      - name: Summary
+        run: |
+          BUMP_TYPE="${{ steps.analyze.outputs.bump_type }}"
+
+          if [ "$BUMP_TYPE" = "none" ]; then
+            echo "### No Version Bump Required" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "No conventional commits (\`feat:\`, \`fix:\`, \`BREAKING CHANGE\`) found since last release." >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Commits analyzed:**" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "${{ steps.commits.outputs.commits }}" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### Version Bumped Successfully" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+            echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+            echo "| Bump Type | \`$BUMP_TYPE\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| Previous Version | \`${{ steps.current.outputs.version }}\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| New Version | \`${{ steps.newversion.outputs.version }}\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| Tag Created | \`v${{ steps.newversion.outputs.version }}\` |" >> $GITHUB_STEP_SUMMARY
+          fi
