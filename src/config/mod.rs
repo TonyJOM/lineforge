@@ -45,7 +45,12 @@ pub fn resolve_bind_address(bind: &str) -> String {
     {
         Ok(output) if output.status.success() => {
             let stdout = String::from_utf8_lossy(&output.stdout);
-            if let Some(ip) = stdout.lines().next().map(str::trim).filter(|s| !s.is_empty()) {
+            if let Some(ip) = stdout
+                .lines()
+                .next()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
                 tracing::info!("Resolved tailscale bind address: {ip}");
                 return ip.to_string();
             }
@@ -58,7 +63,9 @@ pub fn resolve_bind_address(bind: &str) -> String {
             "127.0.0.1".into()
         }
         Err(e) => {
-            tracing::warn!("tailscale command not found or failed: {e} — falling back to 127.0.0.1");
+            tracing::warn!(
+                "tailscale command not found or failed: {e} — falling back to 127.0.0.1"
+            );
             "127.0.0.1".into()
         }
     }
