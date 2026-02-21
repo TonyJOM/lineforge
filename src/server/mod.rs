@@ -58,7 +58,7 @@ pub async fn start(config: Config) -> Result<()> {
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(&addr).await?;
-    tracing::info!("Lineforge server listening on http://{addr}");
+    tracing::info!("Lineforge v{} listening on http://{addr}", env!("CARGO_PKG_VERSION"));
 
     axum::serve(listener, app).await?;
     Ok(())

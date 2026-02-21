@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 
 use crate::config::Config;
 
@@ -9,7 +9,7 @@ use crate::config::Config;
 #[command(name = "forge", version, about = "Lineforge - AI session manager")]
 pub struct Cli {
     #[command(subcommand)]
-    pub command: Command,
+    pub command: Option<Command>,
 }
 
 #[derive(Subcommand)]
@@ -76,7 +76,14 @@ pub enum Command {
 }
 
 pub async fn dispatch(cli: Cli) -> Result<()> {
-    match cli.command {
+    let command = match cli.command {
+        Some(cmd) => cmd,
+        None => {
+            Cli::command().print_help()?;
+            return Ok(());
+        }
+    };
+    match command {
         Command::Serve { port, bind, config } => {
             let mut cfg = Config::load(config.as_ref())?;
             if let Some(p) = port {

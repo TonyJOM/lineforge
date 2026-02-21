@@ -202,7 +202,7 @@ impl App {
         let list = List::new(list_items).block(
             Block::default()
                 .borders(Borders::ALL)
-                .title(" Lineforge Settings "),
+                .title(format!(" Lineforge Settings (v{}) ", env!("CARGO_PKG_VERSION"))),
         );
         frame.render_stateful_widget(list, chunks[0], &mut self.list_state);
 
