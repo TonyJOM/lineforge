@@ -16,10 +16,12 @@ use crate::config::Config;
 
 enum SettingValue {
     Bool(bool),
-    Number(u64, u64, u64), // value, min, max
+    Number(u64, u64, u64),              // value, min, max
+    Choice(usize, Vec<&'static str>),   // selected_index, options
 }
 
 struct SettingItem {
+    id: &'static str,
     label: &'static str,
     description: &'static str,
     value: SettingValue,
@@ -37,6 +39,21 @@ impl App {
     fn from_config(config: &Config) -> Self {
         let items = vec![
             SettingItem {
+                id: "default_cli",
+                label: "Default CLI",
+                description: "Code CLI to use for new sessions (claude or codex)",
+                value: SettingValue::Choice(
+                    if config.default_tool == "codex" { 1 } else { 0 },
+                    vec!["claude", "codex"],
+                ),
+                apply: |c, v| {
+                    if let SettingValue::Choice(idx, opts) = v {
+                        c.default_tool = opts[*idx].to_string();
+                    }
+                },
+            },
+            SettingItem {
+                id: "tailscale",
                 label: "Tailscale Binding",
                 description: "Bind to Tailscale IP (requires tailscale)",
                 value: SettingValue::Bool(config.bind == "tailscale"),
@@ -47,6 +64,7 @@ impl App {
                 },
             },
             SettingItem {
+                id: "yolo_mode",
                 label: "Yolo Mode",
                 description: "Auto-approve all tool calls without confirmation",
                 value: SettingValue::Bool(config.yolo_mode),
@@ -57,6 +75,7 @@ impl App {
                 },
             },
             SettingItem {
+                id: "iterm",
                 label: "iTerm Integration",
                 description: "Enable iTerm2-specific features (badges, marks)",
                 value: SettingValue::Bool(config.iterm_enabled),
@@ -67,6 +86,7 @@ impl App {
                 },
             },
             SettingItem {
+                id: "port",
                 label: "Port",
                 description: "Web UI port (requires restart)",
                 value: SettingValue::Number(config.port as u64, 1024, 65535),
@@ -77,6 +97,7 @@ impl App {
                 },
             },
             SettingItem {
+                id: "log_retention",
                 label: "Log Retention (days)",
                 description: "Number of days to keep session logs",
                 value: SettingValue::Number(config.log_retention_days as u64, 1, 365),
@@ -87,6 +108,7 @@ impl App {
                 },
             },
             SettingItem {
+                id: "max_log_lines",
                 label: "Max Log Lines",
                 description: "Maximum lines stored per session log",
                 value: SettingValue::Number(config.max_log_lines as u64, 100, 1_000_000),
@@ -129,12 +151,21 @@ impl App {
 
     fn toggle_bool(&mut self) {
         let i = self.selected();
+        match self.items[i].value {
+            SettingValue::Choice(..) => {
+                self.cycle_choice();
+                return;
+            }
+            SettingValue::Bool(_) => {}
+            _ => return,
+        }
+        let is_tailscale = self.items[i].id == "tailscale";
         if let SettingValue::Bool(ref mut v) = self.items[i].value {
             *v = !*v;
             self.dirty = true;
 
             // Tailscale validation
-            if i == 0 && *v {
+            if is_tailscale && *v {
                 match std::process::Command::new("tailscale").arg("version").output() {
                     Ok(output) if output.status.success() => {}
                     _ => {
@@ -143,6 +174,14 @@ impl App {
                     }
                 }
             }
+        }
+    }
+
+    fn cycle_choice(&mut self) {
+        let i = self.selected();
+        if let SettingValue::Choice(ref mut idx, ref opts) = self.items[i].value {
+            *idx = (*idx + 1) % opts.len();
+            self.dirty = true;
         }
     }
 
@@ -187,6 +226,7 @@ impl App {
                     SettingValue::Bool(true) => "● ON".to_string(),
                     SettingValue::Bool(false) => "○ OFF".to_string(),
                     SettingValue::Number(n, _, _) => n.to_string(),
+                    SettingValue::Choice(idx, opts) => opts[*idx].to_uppercase(),
                 };
                 let padding = 30usize.saturating_sub(item.label.len());
                 let text = format!("{}{}{:>pad$}{}", marker, item.label, "", val_str, pad = padding);
