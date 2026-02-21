@@ -44,15 +44,14 @@ impl SessionLog {
         let _ = self.broadcast_tx.send(entry.clone());
 
         // Append to log file if configured
-        if let Some(ref path) = self.log_file {
-            if let Ok(mut file) = std::fs::OpenOptions::new()
+        if let Some(ref path) = self.log_file
+            && let Ok(mut file) = std::fs::OpenOptions::new()
                 .create(true)
                 .append(true)
                 .open(path)
-            {
-                use std::io::Write;
-                let _ = writeln!(file, "{}", entry.data);
-            }
+        {
+            use std::io::Write;
+            let _ = writeln!(file, "{}", entry.data);
         }
     }
 

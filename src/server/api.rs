@@ -61,10 +61,11 @@ async fn create_session(
     match mgr.spawn(name, tool, working_dir.clone(), extra_args).await {
         Ok(meta) => {
             // Optionally open in iTerm2
-            if req.auto_open_iterm.unwrap_or(false) && mgr.config.iterm_enabled {
-                if let Err(e) = crate::iterm::open_in_iterm(meta.id, &working_dir) {
-                    tracing::warn!("Failed to open iTerm2: {e}");
-                }
+            if req.auto_open_iterm.unwrap_or(false)
+                && mgr.config.iterm_enabled
+                && let Err(e) = crate::iterm::open_in_iterm(meta.id, &working_dir)
+            {
+                tracing::warn!("Failed to open iTerm2: {e}");
             }
             Ok((StatusCode::CREATED, Json(meta)))
         }
