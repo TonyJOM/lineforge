@@ -33,6 +33,8 @@ struct App {
     list_state: ListState,
     status: Option<(String, Color)>,
     dirty: bool,
+    confirm_quit: bool,
+    editing: Option<String>,
 }
 
 impl App {
@@ -128,6 +130,8 @@ impl App {
             list_state,
             status: None,
             dirty: false,
+            confirm_quit: false,
+            editing: None,
         }
     }
 
@@ -149,7 +153,7 @@ impl App {
         self.status = None;
     }
 
-    fn toggle_bool(&mut self) {
+    fn toggle_value(&mut self) {
         let i = self.selected();
         match self.items[i].value {
             SettingValue::Choice(..) => {
@@ -222,11 +226,16 @@ impl App {
             .enumerate()
             .map(|(idx, item)| {
                 let marker = if idx == self.selected() { ">> " } else { "   " };
-                let val_str = match &item.value {
-                    SettingValue::Bool(true) => "● ON".to_string(),
-                    SettingValue::Bool(false) => "○ OFF".to_string(),
-                    SettingValue::Number(n, _, _) => n.to_string(),
-                    SettingValue::Choice(idx, opts) => opts[*idx].to_uppercase(),
+                let is_editing_this = idx == self.selected() && self.editing.is_some();
+                let val_str = if is_editing_this {
+                    format!("{}▏", self.editing.as_ref().unwrap())
+                } else {
+                    match &item.value {
+                        SettingValue::Bool(true) => "● ON".to_string(),
+                        SettingValue::Bool(false) => "○ OFF".to_string(),
+                        SettingValue::Number(n, _, _) => n.to_string(),
+                        SettingValue::Choice(idx, opts) => opts[*idx].to_uppercase(),
+                    }
                 };
                 let padding = 30usize.saturating_sub(item.label.len());
                 let text = format!("{}{}{:>pad$}{}", marker, item.label, "", val_str, pad = padding);
@@ -254,26 +263,39 @@ impl App {
             (item.description.to_string(), Color::DarkGray)
         };
         let desc = Paragraph::new(Line::from(Span::styled(
-            format!(" {}", desc_text),
+            format!(" {desc_text}"),
             Style::default().fg(desc_color),
         )))
         .block(Block::default().borders(Borders::ALL));
         frame.render_widget(desc, chunks[1]);
 
         // Help bar
-        let mut help_spans = vec![
-            Span::styled(" j/k", Style::default().fg(Color::Cyan)),
-            Span::raw(":nav  "),
-            Span::styled("Enter", Style::default().fg(Color::Cyan)),
-            Span::raw(":toggle  "),
-            Span::styled("h/l", Style::default().fg(Color::Cyan)),
-            Span::raw(":adjust  "),
-            Span::styled("s", Style::default().fg(Color::Cyan)),
-            Span::raw(":save  "),
-            Span::styled("q", Style::default().fg(Color::Cyan)),
-            Span::raw(":quit"),
-        ];
-        if self.dirty {
+        let mut help_spans = if self.editing.is_some() {
+            vec![
+                Span::styled(" 0-9", Style::default().fg(Color::Cyan)),
+                Span::raw(":type  "),
+                Span::styled("Backspace", Style::default().fg(Color::Cyan)),
+                Span::raw(":delete  "),
+                Span::styled("Enter", Style::default().fg(Color::Cyan)),
+                Span::raw(":confirm  "),
+                Span::styled("Esc", Style::default().fg(Color::Cyan)),
+                Span::raw(":cancel"),
+            ]
+        } else {
+            vec![
+                Span::styled(" j/k", Style::default().fg(Color::Cyan)),
+                Span::raw(":nav  "),
+                Span::styled("Enter", Style::default().fg(Color::Cyan)),
+                Span::raw(":toggle  "),
+                Span::styled("h/l", Style::default().fg(Color::Cyan)),
+                Span::raw(":adjust  "),
+                Span::styled("s", Style::default().fg(Color::Cyan)),
+                Span::raw(":save  "),
+                Span::styled("q", Style::default().fg(Color::Cyan)),
+                Span::raw(":quit"),
+            ]
+        };
+        if self.dirty && self.editing.is_none() {
             help_spans.push(Span::raw("  "));
             help_spans.push(Span::styled("[modified]", Style::default().fg(Color::Red)));
         }
@@ -311,23 +333,74 @@ fn run_loop(
             if key.kind != KeyEventKind::Press {
                 continue;
             }
-            match key.code {
-                KeyCode::Char('q') | KeyCode::Esc => {
-                    if app.dirty {
-                        app.save(config)?;
+
+            // Number editing mode — consume keys before normal handling
+            if app.editing.is_some() {
+                match key.code {
+                    KeyCode::Char(c) if c.is_ascii_digit() => {
+                        app.editing.as_mut().unwrap().push(c);
                     }
-                    return Ok(());
+                    KeyCode::Backspace => {
+                        app.editing.as_mut().unwrap().pop();
+                    }
+                    KeyCode::Enter => {
+                        let buf = app.editing.take().unwrap();
+                        let i = app.selected();
+                        if let SettingValue::Number(ref mut val, min, max) = app.items[i].value {
+                            if let Ok(n) = buf.parse::<u64>() {
+                                let clamped = n.clamp(min, max);
+                                if clamped != *val {
+                                    *val = clamped;
+                                    app.dirty = true;
+                                }
+                                if n != clamped {
+                                    app.status = Some((
+                                        format!("Clamped to {clamped} (range {min}–{max})"),
+                                        Color::Yellow,
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                    KeyCode::Esc => {
+                        app.editing = None;
+                    }
+                    _ => {}
                 }
-                KeyCode::Char('j') | KeyCode::Down => app.move_down(),
-                KeyCode::Char('k') | KeyCode::Up => app.move_up(),
-                KeyCode::Enter | KeyCode::Char(' ') => app.toggle_bool(),
-                KeyCode::Char('h') | KeyCode::Left => app.adjust_number(-1),
-                KeyCode::Char('l') | KeyCode::Right => app.adjust_number(1),
+                continue;
+            }
+
+            // Normal mode
+            app.confirm_quit = match key.code {
+                KeyCode::Char('q') | KeyCode::Esc => {
+                    if !app.dirty || app.confirm_quit {
+                        return Ok(());
+                    }
+                    app.status = Some((
+                        "Unsaved changes! Press q again to discard, or s to save".into(),
+                        Color::Yellow,
+                    ));
+                    true
+                }
+                KeyCode::Char('j') | KeyCode::Down => { app.move_down(); false }
+                KeyCode::Char('k') | KeyCode::Up => { app.move_up(); false }
+                KeyCode::Enter | KeyCode::Char(' ') => {
+                    let i = app.selected();
+                    if let SettingValue::Number(n, _, _) = app.items[i].value {
+                        app.editing = Some(n.to_string());
+                    } else {
+                        app.toggle_value();
+                    }
+                    false
+                }
+                KeyCode::Char('h') | KeyCode::Left => { app.adjust_number(-1); false }
+                KeyCode::Char('l') | KeyCode::Right => { app.adjust_number(1); false }
                 KeyCode::Char('s') => {
                     app.save(config)?;
+                    false
                 }
-                _ => {}
-            }
+                _ => false,
+            };
         }
     }
 }
