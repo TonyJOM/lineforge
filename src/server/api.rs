@@ -21,6 +21,7 @@ pub fn routes() -> Router<AppState> {
         .route("/api/sessions/{id}", get(get_session))
         .route("/api/sessions/{id}/input", post(send_input))
         .route("/api/sessions/{id}/stop", post(stop_session))
+        .route("/api/sessions/{id}/resize", post(resize_session))
         .route("/api/sessions/{id}/open-iterm", post(open_iterm))
 }
 
@@ -40,6 +41,8 @@ struct CreateSessionRequest {
     working_dir: Option<PathBuf>,
     extra_args: Option<Vec<String>>,
     auto_open_iterm: Option<bool>,
+    rows: Option<u16>,
+    cols: Option<u16>,
 }
 
 async fn create_session(
@@ -58,7 +61,10 @@ async fn create_session(
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
     let extra_args = req.extra_args.unwrap_or_default();
 
-    match mgr.spawn(name, tool, working_dir.clone(), extra_args).await {
+    let rows = req.rows.unwrap_or(24);
+    let cols = req.cols.unwrap_or(80);
+
+    match mgr.spawn(name, tool, working_dir.clone(), extra_args, rows, cols).await {
         Ok(meta) => {
             // Optionally open in iTerm2
             if req.auto_open_iterm.unwrap_or(false)
@@ -91,6 +97,26 @@ async fn send_input(
     Json(req): Json<InputRequest>,
 ) -> impl IntoResponse {
     match mgr.send_input(id, req.text.into_bytes()).await {
+        Ok(()) => Ok(StatusCode::OK),
+        Err(e) => Err((StatusCode::BAD_REQUEST, e.to_string())),
+    }
+}
+
+#[derive(Deserialize)]
+struct ResizeRequest {
+    rows: u16,
+    cols: u16,
+}
+
+async fn resize_session(
+    State(mgr): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(req): Json<ResizeRequest>,
+) -> impl IntoResponse {
+    if req.rows == 0 || req.rows > 500 || req.cols == 0 || req.cols > 500 {
+        return Err((StatusCode::BAD_REQUEST, "rows and cols must be 1-500".to_string()));
+    }
+    match mgr.resize(id, req.rows, req.cols).await {
         Ok(()) => Ok(StatusCode::OK),
         Err(e) => Err((StatusCode::BAD_REQUEST, e.to_string())),
     }

@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Result;
-use tokio::sync::{RwLock, mpsc, oneshot};
+use tokio::sync::{RwLock, mpsc, oneshot, watch};
 use uuid::Uuid;
 
 use crate::config::Config;
@@ -15,10 +15,16 @@ fn sock_dir() -> PathBuf {
     PathBuf::from("/tmp/lineforge")
 }
 
+pub enum PtyCommand {
+    Input(Vec<u8>),
+    Resize { rows: u16, cols: u16 },
+}
+
 pub struct LiveSession {
     pub meta: SessionMeta,
     pub log: SessionLog,
-    pub input_tx: mpsc::Sender<Vec<u8>>,
+    pub input_tx: mpsc::Sender<PtyCommand>,
+    pub size_tx: watch::Sender<(u16, u16)>,
 }
 
 #[derive(Clone)]
@@ -85,6 +91,8 @@ impl SessionManager {
         tool: ToolKind,
         working_dir: PathBuf,
         extra_args: Vec<String>,
+        rows: u16,
+        cols: u16,
     ) -> Result<SessionMeta> {
         let id = Uuid::new_v4();
         let session_dir = Config::sessions_dir().join(id.to_string());
@@ -107,14 +115,16 @@ impl SessionManager {
         let (pty, pts) = pty_process::open()
             .map_err(|e| ForgeError::Pty(format!("Failed to create PTY: {e}")))?;
 
-        // Set reasonable terminal size
-        pty.resize(pty_process::Size::new(24, 80))
+        // Set terminal size from caller (falls back to 24x80 at call sites)
+        pty.resize(pty_process::Size::new(rows, cols))
             .map_err(|e| ForgeError::Pty(format!("Failed to resize PTY: {e}")))?;
 
         // Build and spawn command (builder methods consume self)
         let child = pty_process::Command::new(&tool_path)
             .args(&extra_args)
             .current_dir(&working_dir)
+            .env("TERM", "xterm-256color")
+            .env("COLORTERM", "truecolor")
             .spawn(pts)
             .map_err(|e| ForgeError::Pty(format!("Failed to spawn {tool_path}: {e}")))?;
 
@@ -142,12 +152,16 @@ impl SessionManager {
         let log = SessionLog::new(self.config.max_log_lines, Some(log_file));
 
         // Set up input channel
-        let (input_tx, input_rx) = mpsc::channel::<Vec<u8>>(256);
+        let (input_tx, input_rx) = mpsc::channel::<PtyCommand>(256);
+
+        // Watch channel for PTY size changes (webview syncs via SSE)
+        let (size_tx, _) = watch::channel((rows, cols));
 
         let live = Arc::new(RwLock::new(LiveSession {
             meta: meta.clone(),
             log,
             input_tx,
+            size_tx,
         }));
 
         {
@@ -201,9 +215,24 @@ impl SessionManager {
             return Err(ForgeError::SessionAlreadyStopped(id).into());
         }
         s.input_tx
-            .send(data)
+            .send(PtyCommand::Input(data))
             .await
             .map_err(|_| ForgeError::Pty("Input channel closed".into()))?;
+        Ok(())
+    }
+
+    pub async fn resize(&self, id: Uuid, rows: u16, cols: u16) -> Result<()> {
+        let sessions = self.sessions.read().await;
+        let session = sessions.get(&id).ok_or(ForgeError::SessionNotFound(id))?;
+        let s = session.read().await;
+        if s.meta.status != SessionStatus::Running {
+            return Err(ForgeError::SessionAlreadyStopped(id).into());
+        }
+        s.input_tx
+            .send(PtyCommand::Resize { rows, cols })
+            .await
+            .map_err(|_| ForgeError::Pty("Input channel closed".into()))?;
+        let _ = s.size_tx.send((rows, cols));
         Ok(())
     }
 
@@ -256,12 +285,19 @@ impl SessionManager {
         let s = session.read().await;
         Ok(s.log.subscribe())
     }
+
+    pub async fn subscribe_size(&self, id: Uuid) -> Result<watch::Receiver<(u16, u16)>> {
+        let sessions = self.sessions.read().await;
+        let session = sessions.get(&id).ok_or(ForgeError::SessionNotFound(id))?;
+        let s = session.read().await;
+        Ok(s.size_tx.subscribe())
+    }
 }
 
 async fn run_pty_io(
     pty: pty_process::Pty,
     mut child: tokio::process::Child,
-    mut input_rx: mpsc::Receiver<Vec<u8>>,
+    mut input_rx: mpsc::Receiver<PtyCommand>,
     sessions: Arc<RwLock<HashMap<Uuid, Arc<RwLock<LiveSession>>>>>,
     id: Uuid,
 ) {
@@ -269,22 +305,45 @@ async fn run_pty_io(
 
     let (mut pty_reader, mut pty_writer) = pty.into_split();
 
-    // Write task: forward input to PTY
+    // Write task: forward input and resize commands to PTY
     let write_handle = tokio::spawn(async move {
-        while let Some(data) = input_rx.recv().await {
-            if pty_writer.write_all(&data).await.is_err() {
-                break;
+        while let Some(cmd) = input_rx.recv().await {
+            match cmd {
+                PtyCommand::Input(data) => {
+                    if pty_writer.write_all(&data).await.is_err() {
+                        break;
+                    }
+                }
+                PtyCommand::Resize { rows, cols } => {
+                    let _ = pty_writer.resize(pty_process::Size::new(rows, cols));
+                }
             }
         }
     });
 
     // Read loop: PTY output -> broadcast + ring buffer
     let mut buf = vec![0u8; 4096];
+    let mut leftover = Vec::new();
     loop {
         match pty_reader.read(&mut buf).await {
             Ok(0) => break,
             Ok(n) => {
-                let text = String::from_utf8_lossy(&buf[..n]).to_string();
+                // Prepend any leftover bytes from previous read
+                let mut data = std::mem::take(&mut leftover);
+                data.extend_from_slice(&buf[..n]);
+
+                // Find the last valid UTF-8 boundary
+                let valid_up_to = match std::str::from_utf8(&data) {
+                    Ok(_) => data.len(),
+                    Err(e) => e.valid_up_to(),
+                };
+
+                // Save incomplete trailing bytes for next read
+                if valid_up_to < data.len() {
+                    leftover = data[valid_up_to..].to_vec();
+                }
+
+                let text = String::from_utf8_lossy(&data[..valid_up_to]).to_string();
                 let sessions_guard = sessions.read().await;
                 if let Some(session) = sessions_guard.get(&id) {
                     let mut s = session.write().await;
@@ -341,11 +400,14 @@ pub async fn create_session_cli(
         .unwrap_or("session")
         .to_string();
     let name = label.unwrap_or(default_name);
+    let (term_cols, term_rows) = crossterm::terminal::size().unwrap_or((80, 24));
     let body = serde_json::json!({
         "name": name,
         "tool": tool.unwrap_or_else(|| config.default_tool.clone()),
         "working_dir": working_dir,
         "extra_args": extra_args,
+        "rows": term_rows,
+        "cols": term_cols,
     });
 
     let client = reqwest::Client::new();
@@ -412,6 +474,10 @@ pub async fn attach_session_cli(id: &str) -> Result<()> {
     use crossterm::terminal;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+    let config = Config::load(None)?;
+    let bind = crate::config::resolve_bind_address(&config.bind);
+    let resize_url = format!("http://{bind}:{}/api/sessions/{id}/resize", config.port);
+
     // Find the attach socket in /tmp/lineforge/.
     // Retry a few times in case the socket hasn't been created yet (race condition).
     let sock_base = sock_dir();
@@ -439,6 +505,34 @@ pub async fn attach_session_cli(id: &str) -> Result<()> {
 
     // Ensure raw mode is disabled on exit
     let _guard = RawModeGuard;
+
+    // Send initial terminal size to PTY
+    if let Ok((cols, rows)) = terminal::size() {
+        let client = reqwest::Client::new();
+        let _ = client
+            .post(&resize_url)
+            .json(&serde_json::json!({ "rows": rows, "cols": cols }))
+            .send()
+            .await;
+    }
+
+    // Listen for SIGWINCH (terminal resize) and forward to server
+    let resize_url_sig = resize_url.clone();
+    tokio::spawn(async move {
+        let mut sigwinch =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::window_change())
+                .expect("Failed to register SIGWINCH handler");
+        while sigwinch.recv().await.is_some() {
+            if let Ok((cols, rows)) = terminal::size() {
+                let client = reqwest::Client::new();
+                let _ = client
+                    .post(&resize_url_sig)
+                    .json(&serde_json::json!({ "rows": rows, "cols": cols }))
+                    .send()
+                    .await;
+            }
+        }
+    });
 
     let mut stdin = tokio::io::stdin();
     let mut stdout = tokio::io::stdout();
@@ -501,7 +595,7 @@ impl Drop for RawModeGuard {
 
 async fn run_attach_listener(
     sock_path: PathBuf,
-    input_tx: mpsc::Sender<Vec<u8>>,
+    input_tx: mpsc::Sender<PtyCommand>,
     broadcast_tx: tokio::sync::broadcast::Sender<crate::session::log::LogEntry>,
     sessions: Arc<RwLock<HashMap<Uuid, Arc<RwLock<LiveSession>>>>>,
     id: Uuid,
@@ -585,7 +679,7 @@ async fn run_attach_listener(
                 match reader.read(&mut buf).await {
                     Ok(0) => break,
                     Ok(n) => {
-                        if input_tx.send(buf[..n].to_vec()).await.is_err() {
+                        if input_tx.send(PtyCommand::Input(buf[..n].to_vec())).await.is_err() {
                             break;
                         }
                     }
