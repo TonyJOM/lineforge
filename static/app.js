@@ -19,12 +19,12 @@
     var inputForm = document.getElementById('input-form');
     var inputText = document.getElementById('input-text');
 
-    // Create xterm.js terminal matching PTY size (manager.rs hardcodes 24x80)
+    // Create xterm.js terminal (initial 80x24, resized by SSE to match PTY)
     var term = new Terminal({
-      cols: 80,
-      rows: 24,
       cursorBlink: true,
       scrollback: 5000,
+      cols: 80,
+      rows: 24,
       fontFamily: "'SF Mono', 'Cascadia Code', 'Fira Code', monospace",
       fontSize: 14,
       theme: {
@@ -51,16 +51,7 @@
       }
     });
 
-    // Load fit addon to auto-size terminal to container
-    var fitAddon = new FitAddon.FitAddon();
-    term.loadAddon(fitAddon);
     term.open(container);
-    fitAddon.fit();
-
-    // Re-fit on window resize
-    window.addEventListener('resize', function() {
-      fitAddon.fit();
-    });
 
     // Send keypresses directly to PTY via input endpoint
     term.onData(function(data) {
@@ -93,6 +84,14 @@
 
     evtSource.addEventListener('gap', function(e) {
       term.write('\r\n--- ' + e.data + ' ---\r\n');
+    });
+
+    // Sync xterm.js dimensions to actual PTY size
+    evtSource.addEventListener('resize', function(e) {
+      try {
+        var size = JSON.parse(e.data);
+        term.resize(size.cols, size.rows);
+      } catch (err) {}
     });
 
     evtSource.onerror = function() {
