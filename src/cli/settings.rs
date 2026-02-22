@@ -16,8 +16,8 @@ use crate::config::Config;
 
 enum SettingValue {
     Bool(bool),
-    Number(u64, u64, u64),              // value, min, max
-    Choice(usize, Vec<&'static str>),   // selected_index, options
+    Number(u64, u64, u64),            // value, min, max
+    Choice(usize, Vec<&'static str>), // selected_index, options
 }
 
 struct SettingItem {
@@ -61,7 +61,11 @@ impl App {
                 value: SettingValue::Bool(config.bind == "tailscale"),
                 apply: |c, v| {
                     if let SettingValue::Bool(on) = v {
-                        c.bind = if *on { "tailscale".into() } else { "127.0.0.1".into() };
+                        c.bind = if *on {
+                            "tailscale".into()
+                        } else {
+                            "127.0.0.1".into()
+                        };
                     }
                 },
             },
@@ -170,11 +174,16 @@ impl App {
 
             // Tailscale validation
             if is_tailscale && *v {
-                match std::process::Command::new("tailscale").arg("version").output() {
+                match std::process::Command::new("tailscale")
+                    .arg("version")
+                    .output()
+                {
                     Ok(output) if output.status.success() => {}
                     _ => {
-                        self.status =
-                            Some(("tailscale not found — will fallback at runtime".into(), Color::Yellow));
+                        self.status = Some((
+                            "tailscale not found — will fallback at runtime".into(),
+                            Color::Yellow,
+                        ));
                     }
                 }
             }
@@ -238,9 +247,18 @@ impl App {
                     }
                 };
                 let padding = 30usize.saturating_sub(item.label.len());
-                let text = format!("{}{}{:>pad$}{}", marker, item.label, "", val_str, pad = padding);
+                let text = format!(
+                    "{}{}{:>pad$}{}",
+                    marker,
+                    item.label,
+                    "",
+                    val_str,
+                    pad = padding
+                );
                 let style = if idx == self.selected() {
-                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD)
                 } else {
                     Style::default().fg(Color::White)
                 };
@@ -248,11 +266,9 @@ impl App {
             })
             .collect();
 
-        let list = List::new(list_items).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(format!(" Lineforge Settings (v{}) ", env!("CARGO_PKG_VERSION"))),
-        );
+        let list = List::new(list_items).block(Block::default().borders(Borders::ALL).title(
+            format!(" Lineforge Settings (v{}) ", env!("CARGO_PKG_VERSION")),
+        ));
         frame.render_stateful_widget(list, chunks[0], &mut self.list_state);
 
         // Description / status bar
@@ -346,19 +362,19 @@ fn run_loop(
                     KeyCode::Enter => {
                         let buf = app.editing.take().unwrap();
                         let i = app.selected();
-                        if let SettingValue::Number(ref mut val, min, max) = app.items[i].value {
-                            if let Ok(n) = buf.parse::<u64>() {
-                                let clamped = n.clamp(min, max);
-                                if clamped != *val {
-                                    *val = clamped;
-                                    app.dirty = true;
-                                }
-                                if n != clamped {
-                                    app.status = Some((
-                                        format!("Clamped to {clamped} (range {min}–{max})"),
-                                        Color::Yellow,
-                                    ));
-                                }
+                        if let SettingValue::Number(ref mut val, min, max) = app.items[i].value
+                            && let Ok(n) = buf.parse::<u64>()
+                        {
+                            let clamped = n.clamp(min, max);
+                            if clamped != *val {
+                                *val = clamped;
+                                app.dirty = true;
+                            }
+                            if n != clamped {
+                                app.status = Some((
+                                    format!("Clamped to {clamped} (range {min}–{max})"),
+                                    Color::Yellow,
+                                ));
                             }
                         }
                     }
@@ -382,8 +398,14 @@ fn run_loop(
                     ));
                     true
                 }
-                KeyCode::Char('j') | KeyCode::Down => { app.move_down(); false }
-                KeyCode::Char('k') | KeyCode::Up => { app.move_up(); false }
+                KeyCode::Char('j') | KeyCode::Down => {
+                    app.move_down();
+                    false
+                }
+                KeyCode::Char('k') | KeyCode::Up => {
+                    app.move_up();
+                    false
+                }
                 KeyCode::Enter | KeyCode::Char(' ') => {
                     let i = app.selected();
                     if let SettingValue::Number(n, _, _) = app.items[i].value {
@@ -393,8 +415,14 @@ fn run_loop(
                     }
                     false
                 }
-                KeyCode::Char('h') | KeyCode::Left => { app.adjust_number(-1); false }
-                KeyCode::Char('l') | KeyCode::Right => { app.adjust_number(1); false }
+                KeyCode::Char('h') | KeyCode::Left => {
+                    app.adjust_number(-1);
+                    false
+                }
+                KeyCode::Char('l') | KeyCode::Right => {
+                    app.adjust_number(1);
+                    false
+                }
                 KeyCode::Char('s') => {
                     app.save(config)?;
                     false

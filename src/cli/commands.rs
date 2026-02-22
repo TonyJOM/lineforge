@@ -123,10 +123,9 @@ pub async fn dispatch(cli: Cli) -> Result<()> {
             extra_args,
         } => {
             let cfg = Config::load(None)?;
-            let id = crate::session::manager::create_session_cli(
-                &cfg, label, cwd, tool, extra_args,
-            )
-            .await?;
+            let id =
+                crate::session::manager::create_session_cli(&cfg, label, cwd, tool, extra_args)
+                    .await?;
             crate::session::manager::attach_session_cli(&id.to_string()).await?;
         }
         Command::NewSession {
@@ -137,10 +136,9 @@ pub async fn dispatch(cli: Cli) -> Result<()> {
             extra_args,
         } => {
             let cfg = Config::load(None)?;
-            let id = crate::session::manager::create_session_cli(
-                &cfg, label, cwd, tool, extra_args,
-            )
-            .await?;
+            let id =
+                crate::session::manager::create_session_cli(&cfg, label, cwd, tool, extra_args)
+                    .await?;
             println!("Created session: {id}");
         }
         Command::Attach { id } => {
