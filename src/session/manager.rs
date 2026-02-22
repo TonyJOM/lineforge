@@ -630,6 +630,7 @@ async fn run_attach_listener(
         };
 
         let input_tx = input_tx.clone();
+        let sessions_clone = sessions.clone();
         // Subscribe before reading the snapshot so we don't miss entries
         // produced between snapshot and first recv.
         let mut log_rx = broadcast_tx.subscribe();
@@ -688,6 +689,28 @@ async fn run_attach_listener(
             }
 
             write_handle.abort();
+
+            // Stop the session when the attach client disconnects
+            let sessions_guard = sessions_clone.read().await;
+            if let Some(session) = sessions_guard.get(&id) {
+                let mut s = session.write().await;
+                if s.meta.status == SessionStatus::Running {
+                    if let Some(pid) = s.meta.pid {
+                        unsafe {
+                            libc::kill(pid as i32, libc::SIGTERM);
+                        }
+                    }
+                    s.meta.status = SessionStatus::Stopped;
+                    s.meta.updated_at = chrono::Utc::now();
+
+                    let meta_path = Config::sessions_dir()
+                        .join(id.to_string())
+                        .join("meta.json");
+                    if let Ok(json) = serde_json::to_string_pretty(&s.meta) {
+                        let _ = std::fs::write(&meta_path, json);
+                    }
+                }
+            }
         });
     }
 }
