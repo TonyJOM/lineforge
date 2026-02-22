@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 
 use crate::config::Config;
 
@@ -9,7 +9,7 @@ use crate::config::Config;
 #[command(name = "forge", version, about = "Lineforge - AI session manager")]
 pub struct Cli {
     #[command(subcommand)]
-    pub command: Command,
+    pub command: Option<Command>,
 }
 
 #[derive(Subcommand)]
@@ -29,7 +29,7 @@ pub enum Command {
         config: Option<PathBuf>,
     },
 
-    /// Create a new session
+    /// Create a new session and attach
     New {
         /// Session label
         #[arg(long)]
@@ -43,9 +43,29 @@ pub enum Command {
         #[arg(long)]
         tool: Option<String>,
 
-        /// Attach terminal immediately
+        /// Skip auto-opening iTerm2 tab
         #[arg(long)]
-        attach: bool,
+        no_iterm: bool,
+
+        /// Extra arguments passed to the CLI tool
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        extra_args: Vec<String>,
+    },
+
+    /// Create a new session without attaching
+    #[command(name = "new-session")]
+    NewSession {
+        /// Session label
+        #[arg(long)]
+        label: Option<String>,
+
+        /// Working directory
+        #[arg(long)]
+        cwd: Option<PathBuf>,
+
+        /// Tool to use (claude or codex)
+        #[arg(long)]
+        tool: Option<String>,
 
         /// Skip auto-opening iTerm2 tab
         #[arg(long)]
@@ -71,12 +91,19 @@ pub enum Command {
         id: String,
     },
 
-    /// Interactive configuration wizard
-    Setup,
+    /// Open interactive settings
+    Settings,
 }
 
 pub async fn dispatch(cli: Cli) -> Result<()> {
-    match cli.command {
+    let command = match cli.command {
+        Some(cmd) => cmd,
+        None => {
+            Cli::command().print_help()?;
+            return Ok(());
+        }
+    };
+    match command {
         Command::Serve { port, bind, config } => {
             let mut cfg = Config::load(config.as_ref())?;
             if let Some(p) = port {
@@ -92,15 +119,27 @@ pub async fn dispatch(cli: Cli) -> Result<()> {
             label,
             cwd,
             tool,
-            attach,
-            no_iterm,
+            no_iterm: _,
             extra_args,
         } => {
             let cfg = Config::load(None)?;
-            crate::session::manager::create_session_cli(
-                &cfg, label, cwd, tool, attach, no_iterm, extra_args,
-            )
-            .await?;
+            let id =
+                crate::session::manager::create_session_cli(&cfg, label, cwd, tool, extra_args)
+                    .await?;
+            crate::session::manager::attach_session_cli(&id.to_string()).await?;
+        }
+        Command::NewSession {
+            label,
+            cwd,
+            tool,
+            no_iterm: _,
+            extra_args,
+        } => {
+            let cfg = Config::load(None)?;
+            let id =
+                crate::session::manager::create_session_cli(&cfg, label, cwd, tool, extra_args)
+                    .await?;
+            println!("Created session: {id}");
         }
         Command::Attach { id } => {
             crate::session::manager::attach_session_cli(&id).await?;
@@ -111,8 +150,8 @@ pub async fn dispatch(cli: Cli) -> Result<()> {
         Command::Kill { id } => {
             crate::session::manager::kill_session_cli(&id).await?;
         }
-        Command::Setup => {
-            println!("Setup wizard coming in Milestone 6");
+        Command::Settings => {
+            super::settings::run()?;
         }
     }
     Ok(())
