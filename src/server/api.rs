@@ -64,7 +64,10 @@ async fn create_session(
     let rows = req.rows.unwrap_or(24);
     let cols = req.cols.unwrap_or(80);
 
-    match mgr.spawn(name, tool, working_dir.clone(), extra_args, rows, cols).await {
+    match mgr
+        .spawn(name, tool, working_dir.clone(), extra_args, rows, cols)
+        .await
+    {
         Ok(meta) => {
             // Optionally open in iTerm2
             if req.auto_open_iterm.unwrap_or(false)
@@ -114,7 +117,10 @@ async fn resize_session(
     Json(req): Json<ResizeRequest>,
 ) -> impl IntoResponse {
     if req.rows == 0 || req.rows > 500 || req.cols == 0 || req.cols > 500 {
-        return Err((StatusCode::BAD_REQUEST, "rows and cols must be 1-500".to_string()));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "rows and cols must be 1-500".to_string(),
+        ));
     }
     match mgr.resize(id, req.rows, req.cols).await {
         Ok(()) => Ok(StatusCode::OK),

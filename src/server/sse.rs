@@ -58,8 +58,7 @@ async fn stream_logs(State(mgr): State<AppState>, Path(id): Path<Uuid>) -> impl 
         }
 
         // Merge live log + resize events
-        let mut log_stream =
-            tokio_stream::wrappers::BroadcastStream::new(log_rx);
+        let mut log_stream = tokio_stream::wrappers::BroadcastStream::new(log_rx);
 
         loop {
             tokio::select! {

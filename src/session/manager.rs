@@ -680,7 +680,11 @@ async fn run_attach_listener(
                 match reader.read(&mut buf).await {
                     Ok(0) => break,
                     Ok(n) => {
-                        if input_tx.send(PtyCommand::Input(buf[..n].to_vec())).await.is_err() {
+                        if input_tx
+                            .send(PtyCommand::Input(buf[..n].to_vec()))
+                            .await
+                            .is_err()
+                        {
                             break;
                         }
                     }
