@@ -14,12 +14,49 @@
     <span>ID: {{ session.id }}</span>
   </div>
 
-  <div id="terminal-container" class="terminal-container"></div>
+  <div class="view-switch" role="tablist" aria-label="Session views">
+    <button type="button" class="view-tab is-active" data-view="chat" role="tab" aria-selected="true">Chat</button>
+    <button type="button" class="view-tab" data-view="terminal" role="tab" aria-selected="false">Terminal</button>
+  </div>
 
-  <form id="input-form" class="input-form">
-    <input type="text" id="input-text" placeholder="Line input (Enter to send)..." autocomplete="off">
-    <button type="submit">Send</button>
-  </form>
+  <div id="chat-view" class="session-view is-active" data-view-pane="chat">
+    <div class="chat-toolbar">
+      <div class="chat-status-wrap">
+        <span id="chat-status-pill" class="chat-status-pill">Connecting…</span>
+      </div>
+      <div class="mode-toggle" role="group" aria-label="Claude mode">
+        <button type="button" class="mode-btn" data-chat-mode="default">Default</button>
+        <button type="button" class="mode-btn" data-chat-mode="plan">Plan</button>
+        <button type="button" class="mode-btn" data-chat-mode="yolo">Yolo</button>
+      </div>
+    </div>
+
+    <div id="chat-plan" class="chat-plan hidden">
+      <div class="chat-plan-header">Current Plan</div>
+      <ol id="chat-plan-items"></ol>
+      <pre id="chat-plan-markdown" class="chat-plan-markdown"></pre>
+    </div>
+
+    <div id="chat-messages" class="chat-messages"></div>
+
+    <div id="chat-question" class="chat-question hidden"></div>
+
+    <form id="chat-input-form" class="chat-input-form">
+      <textarea id="chat-input-text" rows="3" placeholder="Message Claude…" autocomplete="off"></textarea>
+      <div class="chat-input-actions">
+        <button type="submit" class="btn btn-primary">Send</button>
+      </div>
+    </form>
+  </div>
+
+  <div id="terminal-view" class="session-view" data-view-pane="terminal">
+    <div id="terminal-container" class="terminal-container"></div>
+
+    <form id="terminal-input-form" class="input-form">
+      <input type="text" id="terminal-input-text" placeholder="Line input (Enter to send)…" autocomplete="off">
+      <button type="submit">Send</button>
+    </form>
+  </div>
 
   <div class="session-actions">
     <button id="btn-stop" class="btn btn-danger" onclick="stopSession('{{ session.id }}')">Stop</button>
@@ -29,5 +66,6 @@
 
 <script>
   const SESSION_ID = "{{ session.id }}";
+  const SESSION_TOOL = "{{ session.tool }}";
 </script>
 {% endblock %}

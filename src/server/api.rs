@@ -20,6 +20,10 @@ pub fn routes() -> Router<AppState> {
         .route("/api/sessions", get(list_sessions).post(create_session))
         .route("/api/sessions/{id}", get(get_session))
         .route("/api/sessions/{id}/input", post(send_input))
+        .route("/api/sessions/{id}/chat", get(get_chat))
+        .route("/api/sessions/{id}/chat/send", post(send_chat))
+        .route("/api/sessions/{id}/chat/answer", post(answer_chat))
+        .route("/api/sessions/{id}/chat/mode", post(set_chat_mode))
         .route("/api/sessions/{id}/stop", post(stop_session))
         .route("/api/sessions/{id}/resize", post(resize_session))
         .route("/api/sessions/{id}/open-iterm", post(open_iterm))
@@ -100,6 +104,65 @@ async fn send_input(
     Json(req): Json<InputRequest>,
 ) -> impl IntoResponse {
     match mgr.send_input(id, req.text.into_bytes()).await {
+        Ok(()) => Ok(StatusCode::OK),
+        Err(e) => Err((StatusCode::BAD_REQUEST, e.to_string())),
+    }
+}
+
+async fn get_chat(State(mgr): State<AppState>, Path(id): Path<Uuid>) -> impl IntoResponse {
+    match mgr.get_chat_snapshot(id).await {
+        Ok(snapshot) => Ok(Json(snapshot)),
+        Err(_) => Err((StatusCode::NOT_FOUND, "Session not found")),
+    }
+}
+
+#[derive(Deserialize)]
+struct ChatMessageRequest {
+    text: String,
+}
+
+async fn send_chat(
+    State(mgr): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(req): Json<ChatMessageRequest>,
+) -> impl IntoResponse {
+    match mgr.send_chat_message(id, req.text).await {
+        Ok(()) => Ok(StatusCode::OK),
+        Err(e) => Err((StatusCode::BAD_REQUEST, e.to_string())),
+    }
+}
+
+#[derive(Deserialize)]
+struct ChatModeRequest {
+    mode: String,
+}
+
+async fn set_chat_mode(
+    State(mgr): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(req): Json<ChatModeRequest>,
+) -> impl IntoResponse {
+    match mgr.set_chat_mode(id, &req.mode).await {
+        Ok(()) => Ok(StatusCode::OK),
+        Err(e) => Err((StatusCode::BAD_REQUEST, e.to_string())),
+    }
+}
+
+#[derive(Deserialize)]
+struct ChatAnswerRequest {
+    answer: String,
+    option_index: Option<usize>,
+}
+
+async fn answer_chat(
+    State(mgr): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(req): Json<ChatAnswerRequest>,
+) -> impl IntoResponse {
+    match mgr
+        .answer_chat_question(id, req.answer, req.option_index)
+        .await
+    {
         Ok(()) => Ok(StatusCode::OK),
         Err(e) => Err((StatusCode::BAD_REQUEST, e.to_string())),
     }

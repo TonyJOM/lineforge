@@ -8,11 +8,17 @@ use uuid::Uuid;
 
 use crate::config::Config;
 use crate::error::ForgeError;
+use crate::session::chat;
 use crate::session::log::SessionLog;
 use crate::session::model::{SessionMeta, SessionStatus, ToolKind};
 
 fn sock_dir() -> PathBuf {
     PathBuf::from("/tmp/lineforge")
+}
+
+fn has_arg(args: &[String], key: &str) -> bool {
+    args.iter()
+        .any(|arg| arg == key || arg.starts_with(&format!("{key}=")))
 }
 
 pub enum PtyCommand {
@@ -101,6 +107,18 @@ impl SessionManager {
         let tool_path = crate::session::pty::resolve_tool_path(&self.config, &tool)?;
 
         let mut extra_args = extra_args;
+        if tool == ToolKind::Claude {
+            if !has_arg(&extra_args, "--session-id") {
+                extra_args.push("--session-id".to_string());
+                extra_args.push(id.to_string());
+            }
+            if !has_arg(&extra_args, "--allow-dangerously-skip-permissions")
+                && !has_arg(&extra_args, "--dangerously-skip-permissions")
+            {
+                extra_args.push("--allow-dangerously-skip-permissions".to_string());
+            }
+        }
+
         if self.config.yolo_mode {
             let yolo_flag = match tool {
                 ToolKind::Claude => "--dangerously-skip-permissions",
@@ -291,6 +309,96 @@ impl SessionManager {
         let session = sessions.get(&id).ok_or(ForgeError::SessionNotFound(id))?;
         let s = session.read().await;
         Ok(s.size_tx.subscribe())
+    }
+
+    pub async fn get_chat_snapshot(&self, id: Uuid) -> Result<chat::ChatSnapshot> {
+        let meta = self.get(id).await?;
+
+        if meta.tool != ToolKind::Claude {
+            return Ok(chat::parse_snapshot(&meta, None, None));
+        }
+
+        let transcript_path = chat::expected_transcript_path(&meta)
+            .filter(|path| path.exists())
+            .or_else(|| chat::fallback_transcript_path(&meta));
+
+        let content = match transcript_path.as_ref() {
+            Some(path) => tokio::fs::read_to_string(path).await.ok(),
+            None => None,
+        };
+
+        let mut snapshot =
+            chat::parse_snapshot(&meta, transcript_path.as_deref(), content.as_deref());
+
+        if let Ok(log_entries) = self.get_log_snapshot(id).await {
+            let terminal_output = log_entries
+                .into_iter()
+                .map(|entry| entry.data)
+                .collect::<String>();
+            snapshot = chat::augment_snapshot_from_terminal_output(snapshot, &terminal_output);
+        }
+
+        if snapshot.pending_question.is_some() {
+            snapshot.state = "awaiting_input".to_string();
+            snapshot.status_label = "Waiting for your answer".to_string();
+        }
+
+        Ok(snapshot)
+    }
+
+    pub async fn send_chat_message(&self, id: Uuid, mut text: String) -> Result<()> {
+        self.send_line_as_keys(id, std::mem::take(&mut text)).await
+    }
+
+    pub async fn answer_chat_question(
+        &self,
+        id: Uuid,
+        mut answer: String,
+        option_index: Option<usize>,
+    ) -> Result<()> {
+        if let Some(index) = option_index
+            && index > 0
+        {
+            return self.send_line_as_keys(id, index.to_string()).await;
+        }
+        self.send_line_as_keys(id, std::mem::take(&mut answer))
+            .await
+    }
+
+    pub async fn set_chat_mode(&self, id: Uuid, mode: &str) -> Result<()> {
+        let meta = self.get(id).await?;
+        if meta.tool != ToolKind::Claude {
+            anyhow::bail!("Chat mode controls are only available for Claude sessions");
+        }
+
+        match mode {
+            "plan" => self.send_line_as_keys(id, "/plan".to_string()).await?,
+            "yolo" => self.send_input(id, b"\x1b[Z".to_vec()).await?,
+            "default" => {
+                let snapshot = self.get_chat_snapshot(id).await?;
+                if snapshot.permission_mode == "plan" || snapshot.view_mode == "plan" {
+                    self.send_line_as_keys(id, "/plan".to_string()).await?;
+                } else {
+                    self.send_input(id, b"\x1b[Z".to_vec()).await?;
+                }
+            }
+            other => anyhow::bail!("Unknown mode '{other}', expected plan|yolo|default"),
+        }
+
+        Ok(())
+    }
+
+    async fn send_line_as_keys(&self, id: Uuid, text: String) -> Result<()> {
+        let trimmed = text.trim_end_matches(['\r', '\n']);
+        if trimmed.trim().is_empty() {
+            return Ok(());
+        }
+
+        // Send text and Enter as separate key events; Claude TUI can treat a single
+        // combined write as text insertion rather than submit.
+        self.send_input(id, trimmed.as_bytes().to_vec()).await?;
+        tokio::time::sleep(std::time::Duration::from_millis(35)).await;
+        self.send_input(id, vec![b'\r']).await
     }
 }
 
